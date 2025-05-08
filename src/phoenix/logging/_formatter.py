@@ -23,6 +23,7 @@ LOG_RECORD_BUILTIN_ATTRS = {
     "process",
     "processName",
     "relativeCreated",
+    "severity",
     "stack_info",
     "thread",
     "threadName",
@@ -46,6 +47,7 @@ class PhoenixJSONFormatter(logging.Formatter):
     def _prepare_log_dict(self, record: logging.LogRecord) -> dict[str, str]:
         always_fields = {
             "message": record.getMessage(),
+            "severity": record.levelname,
             "timestamp": dt.datetime.fromtimestamp(record.created, tz=dt.timezone.utc).isoformat(),
         }
         if record.exc_info is not None:

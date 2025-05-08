@@ -62,6 +62,7 @@ def _setup_application_logging() -> None:
 
     fmt_keys = {
         "level": "levelname",
+        "severity": "levelname",
         "message": "message",
         "timestamp": "timestamp",
         "logger": "name",

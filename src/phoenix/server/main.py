@@ -9,6 +9,7 @@ from threading import Thread
 from time import sleep, time
 from typing import Optional
 from urllib.parse import urljoin
+import logging
 
 from jinja2 import BaseLoader, Environment
 from uvicorn import Config, Server
@@ -17,6 +18,7 @@ import phoenix.trace.v1 as pb
 from phoenix.config import (
     EXPORT_DIR,
     TLSConfigVerifyClient,
+    LoggingMode,
     get_env_access_token_expiry,
     get_env_allowed_origins,
     get_env_auth_settings,
@@ -35,6 +37,7 @@ from phoenix.config import (
     get_env_password_reset_token_expiry,
     get_env_port,
     get_env_refresh_token_expiry,
+    get_env_show_welcome_message,
     get_env_smtp_hostname,
     get_env_smtp_mail_from,
     get_env_smtp_password,
@@ -146,6 +149,52 @@ def _remove_pid_file() -> None:
 
 def _get_pid_file() -> Path:
     return get_pids_path() / str(os.getpid())
+
+
+def get_uvicorn_json_log_config() -> Optional[dict]:
+    """
+    Returns a logging configuration dictionary for Uvicorn based on the server logging mode.
+
+    If the server logging mode is set to 'structured', this returns a configuration that
+    formats logs as JSON, ensuring consistent JSON formatting across both Phoenix application
+    logs and Uvicorn server logs.
+
+    If the server logging mode is set to 'default', this returns None, which will cause
+    Uvicorn to use its default logging configuration.
+
+    Returns:
+        Optional[dict]: A logging configuration dictionary if structured logging is enabled,
+                        None otherwise.
+    """
+    # Get the server logging mode
+    env_logging_mode = get_env_logging_mode()
+
+    # If the server logging mode is set to default, return None to use Uvicorn's default logging
+    if env_logging_mode is LoggingMode.DEFAULT:
+        return None
+
+    # Otherwise, return a JSON logging configuration
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "json": {
+                "()" : "phoenix.logging.uvicorn_json_formatter.UvicornJSONFormatter",
+            }
+        },
+        "handlers": {
+            "default": {
+                "formatter": "json",
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stdout",
+            },
+        },
+        "loggers": {
+            "uvicorn": {"handlers": ["default"], "level": logging.getLevelName(Settings.logging_level), "propagate": False},
+            "uvicorn.error": {"handlers": ["default"], "level": logging.getLevelName(Settings.logging_level), "propagate": False},
+            "uvicorn.access": {"handlers": ["default"], "level": logging.getLevelName(Settings.logging_level), "propagate": False},
+        },
+    }
 
 
 DEFAULT_UMAP_PARAMS_STR = f"{DEFAULT_MIN_DIST},{DEFAULT_N_NEIGHBORS},{DEFAULT_N_SAMPLES}"
@@ -383,21 +432,28 @@ def main() -> None:
     http_scheme = "https" if tls_enabled_for_http else "http"
     grpc_scheme = "https" if tls_enabled_for_grpc else "http"
     root_path = urljoin(f"{http_scheme}://{host}:{port}", host_root_path)
-    msg = _WELCOME_MESSAGE.render(
-        version=phoenix_version,
-        ui_path=root_path,
-        grpc_path=f"{grpc_scheme}://{host}:{get_env_grpc_port()}",
-        http_path=urljoin(root_path, "v1/traces"),
-        storage=get_printable_db_url(db_connection_str),
-        schema=get_env_database_schema(),
-        auth_enabled=authentication_enabled,
-        tls_enabled_for_http=tls_enabled_for_http,
-        tls_enabled_for_grpc=tls_enabled_for_grpc,
-        tls_verify_client=tls_verify_client,
-        allowed_origins=allowed_origins,
-    )
-    if sys.platform.startswith("win"):
-        msg = codecs.encode(msg, "ascii", errors="ignore").decode("ascii").strip()
+
+    # Determine whether to show the welcome message
+    show_welcome_message = get_env_show_welcome_message()
+
+    # Prepare the welcome message if needed
+    msg = ""
+    if show_welcome_message:
+        msg = _WELCOME_MESSAGE.render(
+            version=phoenix_version,
+            ui_path=root_path,
+            grpc_path=f"{grpc_scheme}://{host}:{get_env_grpc_port()}",
+            http_path=urljoin(root_path, "v1/traces"),
+            storage=get_printable_db_url(db_connection_str),
+            schema=get_env_database_schema(),
+            auth_enabled=authentication_enabled,
+            tls_enabled_for_http=tls_enabled_for_http,
+            tls_enabled_for_grpc=tls_enabled_for_grpc,
+            tls_verify_client=tls_verify_client,
+            allowed_origins=allowed_origins,
+        )
+        if sys.platform.startswith("win"):
+            msg = codecs.encode(msg, "ascii", errors="ignore").decode("ascii").strip()
     scaffolder_config = ScaffolderConfig(
         db=factory,
         tracing_fixture_names=tracing_fixture_names,
@@ -434,7 +490,7 @@ def main() -> None:
         enable_prometheus=enable_prometheus,
         initial_spans=fixture_spans,
         initial_evaluations=fixture_evals,
-        startup_callbacks=[lambda: print(msg)],
+        startup_callbacks=[lambda: print(msg) if msg else None],
         shutdown_callbacks=instrumentation_cleanups,
         secret=secret,
         password_reset_token_expiry=get_env_password_reset_token_expiry(),
@@ -452,6 +508,7 @@ def main() -> None:
         host=host,  # type: ignore[arg-type]
         port=port,
         root_path=host_root_path,
+        log_config=get_uvicorn_json_log_config()
     )
 
     if tls_enabled_for_http:

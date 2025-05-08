@@ -128,6 +128,11 @@ This should only be used by developers working on the Phoenix server that need t
 switching between branches without having to run migrations.
 """
 
+ENV_PHOENIX_SHOW_WELCOME_MESSAGE = "PHOENIX_SHOW_WELCOME_MESSAGE"
+"""
+Whether to display the welcome message at startup. Defaults to True.
+"""
+
 # Phoenix server OpenTelemetry instrumentation environment variables
 ENV_PHOENIX_SERVER_INSTRUMENTATION_OTLP_TRACE_COLLECTOR_HTTP_ENDPOINT = (
     "PHOENIX_SERVER_INSTRUMENTATION_OTLP_TRACE_COLLECTOR_HTTP_ENDPOINT"
@@ -1450,3 +1455,10 @@ def _validate_file_exists_and_is_readable(
             f.read(1)  # Read just one byte to verify readability
     except Exception as e:
         raise ValueError(f"{description} file is not readable: {e}")
+
+def get_env_show_welcome_message() -> bool:
+    """
+    Gets whether to display the welcome message at startup.
+    Defaults to True if not set.
+    """
+    return _bool_val(ENV_PHOENIX_SHOW_WELCOME_MESSAGE, True)
